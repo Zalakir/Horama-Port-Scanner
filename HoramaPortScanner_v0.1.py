@@ -10,7 +10,7 @@ from datetime import datetime
 os.system('cls')
 
 #Title
-ascii_banner = pyfiglet.figlet_format("PORT SCANNER V0.4")
+ascii_banner = pyfiglet.figlet_format("PORT SCANNER V0.1")
 print(ascii_banner)
 
 #Ask IPv4 input
