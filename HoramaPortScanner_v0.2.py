@@ -10,7 +10,7 @@ from datetime import datetime
 os.system('cls')
 
 # ASCII Title Banner
-ascii_banner = pyfiglet.figlet_format("HORAMA:\nPORT SCANNER V0.1")
+ascii_banner = pyfiglet.figlet_format("HORAMA:\nPORT SCANNER V0.2")
 print(ascii_banner)
 
 
