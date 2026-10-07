@@ -1,0 +1,22 @@
+# Horama Port Scanner theme. Edit these values and restart the app.
+# Colors use hex codes (#RRGGBB). Any missing value falls back to the default.
+
+colors:
+  background: "#0f172a"      # window background
+  surface: "#1e293b"         # panels and input fields
+  border: "#334155"
+  text: "#e2e8f0"
+  muted_text: "#94a3b8"
+  accent: "#38bdf8"          # title, progress bar, primary button
+  accent_text: "#0f172a"     # text on top of the accent color
+  accent_hover: "#7dd3fc"
+  disabled: "#475569"
+  results_background: "#020617"
+  results_text: "#4ade80"    # open port lines
+
+fonts:
+  family: "Segoe UI"
+  size: 10
+  title_size: 20
+  results_family: "Consolas"
+  results_size: 10
