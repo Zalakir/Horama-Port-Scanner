@@ -1,4 +1,5 @@
 import csv
+import ctypes
 import os
 import queue
 import socket
@@ -12,7 +13,42 @@ try:
 except ImportError:
     yaml = None
 
-THEME_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "theme.yaml")
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+THEME_FILE = os.path.join(APP_DIR, "theme.yaml")
+ICON_FILE = os.path.join(APP_DIR, "Ico", "Horama.ico")
+
+# Ports scanned by default, and the fixed number of simultaneous workers.
+DEFAULT_PORTS = "1-65535"
+MAX_WORKERS = 2000
+
+
+def parse_ports(text):
+    # Accepts a range ("20-80"), specific ports ("22,80,443"), or a mix of both.
+    # Returns a sorted list without duplicates.
+    ports = set()
+    for part in text.replace(" ", "").split(","):
+        if not part:
+            continue
+        try:
+            if "-" in part:
+                first, last = (int(value) for value in part.split("-"))
+                if first > last:
+                    raise ValueError(f"Invalid range '{part}': the start is above the end.")
+                ports.update(range(first, last + 1))
+            else:
+                ports.add(int(part))
+        except ValueError as error:
+            if str(error).startswith("Invalid range"):
+                raise
+            raise ValueError(
+                f"Invalid entry '{part}'. Use a range such as 20-80 or specific "
+                "ports such as 22,80,443."
+            ) from None
+    if not ports:
+        raise ValueError("Enter at least one port, such as 1-65535 or 22,80,443.")
+    if min(ports) < 1 or max(ports) > 65535:
+        raise ValueError("Ports must be between 1 and 65535.")
+    return sorted(ports)
 
 # Used for any value missing from theme.yaml, or when the file/PyYAML is unavailable.
 DEFAULT_THEME = {
@@ -61,6 +97,7 @@ class PortScannerApp:
         self.root.title("Horama Port Scanner")
         self.root.geometry("760x560")
         self.root.minsize(620, 440)
+        self._set_icon()
         self.theme = load_theme()
         self._apply_theme()
 
@@ -80,6 +117,21 @@ class PortScannerApp:
         # Build the window and periodically check for messages from scan workers.
         self._build_ui()
         self.root.after(100, self._process_events)
+
+    def _set_icon(self):
+        # Give the app its own Windows taskbar identity so it shows the Horama
+        # icon instead of being grouped under Python.
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "Horama.PortScanner"
+            )
+        except (AttributeError, OSError):
+            pass
+        # Keep running with the default icon if the file is missing or unsupported.
+        try:
+            self.root.iconbitmap(default=ICON_FILE)
+        except tk.TclError:
+            pass
 
     def _apply_theme(self):
         # The "clam" theme is the most customizable built-in ttk theme.
@@ -183,29 +235,21 @@ class PortScannerApp:
             row=0, column=0, sticky="w", padx=(0, 10), pady=4
         )
         self.host_entry = ttk.Entry(settings)
-        self.host_entry.grid(row=0, column=1, columnspan=5, sticky="ew", pady=4)
+        self.host_entry.grid(row=0, column=1, sticky="ew", pady=4)
         self.host_entry.insert(0, "127.0.0.1")
 
-        ttk.Label(settings, text="Port range").grid(
+        ttk.Label(settings, text="Ports").grid(
             row=1, column=0, sticky="w", padx=(0, 10), pady=4
         )
-        self.start_port = tk.StringVar(value="1")
-        self.end_port = tk.StringVar(value="65535")
-        ttk.Spinbox(
-            settings, from_=1, to=65535, textvariable=self.start_port, width=9
-        ).grid(row=1, column=1, sticky="w", pady=4)
-        ttk.Label(settings, text="to").grid(row=1, column=2, padx=8)
-        ttk.Spinbox(
-            settings, from_=1, to=65535, textvariable=self.end_port, width=9
-        ).grid(row=1, column=3, sticky="w", pady=4)
-
-        ttk.Label(settings, text="Workers").grid(
-            row=1, column=4, sticky="e", padx=(20, 8), pady=4
-        )
-        self.worker_count = tk.StringVar(value="2000")
-        ttk.Spinbox(
-            settings, from_=1, to=2000, textvariable=self.worker_count, width=7
-        ).grid(row=1, column=5, sticky="w", pady=4)
+        # A free-text field: "1-65535" for a range, "22,80,443" for specific ports.
+        self.ports_entry = ttk.Entry(settings)
+        self.ports_entry.grid(row=1, column=1, sticky="ew", pady=4)
+        self.ports_entry.insert(0, DEFAULT_PORTS)
+        ttk.Label(
+            settings,
+            text="Range: 20-80   Specific ports: 22,80,443",
+            style="Subtitle.TLabel",
+        ).grid(row=2, column=1, sticky="w")
 
         buttons = ttk.Frame(container)
         buttons.grid(row=3, column=0, sticky="ew", pady=(14, 8))
@@ -267,42 +311,20 @@ class PortScannerApp:
     def start_scan(self):
         # Read and validate settings before starting any background work.
         host = self.host_entry.get().strip()
-        try:
-            first_port = int(self.start_port.get())
-            last_port = int(self.end_port.get())
-            workers = int(self.worker_count.get())
-        except ValueError:
-            messagebox.showerror(
-                "Invalid scan settings",
-                "Ports and worker count must be whole numbers.",
-                parent=self.root,
-            )
-            return
-
         if not host:
             messagebox.showerror(
                 "Invalid scan settings", "Enter a host or IPv4 address.", parent=self.root
             )
             return
-        if not (1 <= first_port <= last_port <= 65535):
-            messagebox.showerror(
-                "Invalid scan settings",
-                "Enter a port range between 1 and 65535, with the start no greater "
-                "than the end.",
-                parent=self.root,
-            )
-            return
-        if not 1 <= workers <= 2000:
-            messagebox.showerror(
-                "Invalid scan settings",
-                "Worker count must be between 1 and 2000.",
-                parent=self.root,
-            )
+        try:
+            ports = parse_ports(self.ports_entry.get())
+        except ValueError as error:
+            messagebox.showerror("Invalid scan settings", str(error), parent=self.root)
             return
 
         self.is_scanning = True
         self.cancel_event.clear()
-        self.total_ports = last_port - first_port + 1
+        self.total_ports = len(ports)
         self.completed_ports = 0
         self.open_ports = []
         self.scan_host = host
@@ -312,6 +334,7 @@ class PortScannerApp:
         self.export_button.configure(state=tk.DISABLED)
         self.cancel_button.configure(state=tk.NORMAL)
         self.host_entry.configure(state=tk.DISABLED)
+        self.ports_entry.configure(state=tk.DISABLED)
         self.status.set("Resolving host and starting scan...")
         self._set_results("")
 
@@ -319,12 +342,12 @@ class PortScannerApp:
         # responsive while ports are being checked.
         scan_thread = threading.Thread(
             target=self._run_scan,
-            args=(host, first_port, last_port, workers),
+            args=(host, ports),
             daemon=True,
         )
         scan_thread.start()
 
-    def _run_scan(self, host, first_port, last_port, workers):
+    def _run_scan(self, host, ports):
         # Resolve names such as localhost once, then connect to the resolved IPv4.
         started = time.monotonic()
         try:
@@ -333,22 +356,22 @@ class PortScannerApp:
             self.events.put(("finished", (None, 0, False, str(error))))
             return
 
-        next_port = first_port
-        # Workers share the next port and completed count, so protect updates
+        next_index = 0
+        # Workers share the next index and completed count, so protect updates
         # with a lock to ensure each port is assigned once.
         state_lock = threading.Lock()
         progress_interval = max(1, self.total_ports // 100)
 
         def scan_worker():
-            nonlocal next_port
-            # Each worker claims one port at a time until the range is exhausted
+            nonlocal next_index
+            # Each worker claims one port at a time until the list is exhausted
             # or cancellation is requested.
             while not self.cancel_event.is_set():
                 with state_lock:
-                    if next_port > last_port:
+                    if next_index >= len(ports):
                         return
-                    port = next_port
-                    next_port += 1
+                    port = ports[next_index]
+                    next_index += 1
 
                 try:
                     # A successful TCP connection means this port is accepting
@@ -366,9 +389,10 @@ class PortScannerApp:
                 if completed % progress_interval == 0 or completed == self.total_ports:
                     self.events.put(("progress", completed))
 
-        # Start a bounded pool of workers, then wait for all of them to finish.
+        # Start the worker pool (never more threads than ports), then wait for it.
         workers_list = [
-            threading.Thread(target=scan_worker, daemon=True) for _ in range(workers)
+            threading.Thread(target=scan_worker, daemon=True)
+            for _ in range(min(MAX_WORKERS, len(ports)))
         ]
         for worker in workers_list:
             worker.start()
@@ -451,6 +475,7 @@ class PortScannerApp:
         self.scan_button.configure(state=tk.NORMAL)
         self.cancel_button.configure(state=tk.DISABLED)
         self.host_entry.configure(state=tk.NORMAL)
+        self.ports_entry.configure(state=tk.NORMAL)
         if error:
             self.status.set(f"Could not resolve host: {error}")
             messagebox.showerror("Host lookup failed", error, parent=self.root)
